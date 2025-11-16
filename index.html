@@ -38,13 +38,14 @@
     const ctx = canvas.getContext('2d');
 
     let player;
-    let walls = [];
-    let items = [];      // 通常アイテム＋モード切替アイテム
-    let birds = [];
-    let dogs = [];
-    let holes = [];
-    let platforms = [];  // 空中に乗れる床
-    let floatTexts = []; // アイテム取得時のフローティングテキスト
+    let walls = [];       // 壁（足場扱い、ダメージなし）
+    let platforms = [];   // 空中床
+    let items = [];       // 通常アイテム＋モード切替アイテム
+    let birds = [];       // 空の敵
+    let turtles = [];     // 地上の敵（亀）
+    let mushrooms = [];   // 地上の敵（キノコ）
+    let holes = [];       // 穴
+    let floatTexts = [];  // アイテム取得時のフローティングテキスト
 
     let score = 0;
     let gameOver = false;
@@ -68,7 +69,7 @@
 
     let isBikeMode = false;
     let bikeTimer = 0;
-    const BIKE_MODE_DURATION = CHICK_MODE_DURATION * 3; // 自転車モードは3倍の長さ
+    const BIKE_MODE_DURATION = CHICK_MODE_DURATION * 3; // 自転車モードは3倍
 
     // --- ライフ管理 ---
     let lives = 3;
@@ -161,17 +162,18 @@
         width: 40,
         height: 40,
         vy: 0,
-        emoji: "🏃‍♂️",    // 走っている人
+        emoji: "🏃‍♂️",    // 走っている人（常に前転）
         angle: 0,
         onGround: true
       };
 
       walls = [];
+      platforms = [];
       items = [];
       birds = [];
-      dogs = [];
+      turtles = [];
+      mushrooms = [];
       holes = [];
-      platforms = [];
       floatTexts = [];
 
       score = 0;
@@ -293,50 +295,51 @@
     }
 
     // ==========================
-    // オブジェクト生成（壁の階段状パターン含む）
+    // オブジェクト生成
+    //  - 壁は足場（ダメージなし）
+    //  - 亀🐢 / キノコ🍄 / 鳥🐦 は敵（ダメージあり）
     // ==========================
     function spawnObject() {
       const groundY = getGroundY();
       const x = canvas.width + 40;
-
       const r = Math.random();
 
-      if (r < 0.22) {
-        // 通常アイテム（食べ物）
+      if (r < 0.2) {
+        // 通常アイテム
         const foodEmojis = ["🍎", "🍌", "🍕", "🍩", "🍔", "🍇"];
         items.push({
           type: "score",
-          x: x,
+          x,
           y: randomRange(groundY * 0.3, groundY - 120),
           width: 28,
           height: 28,
           emoji: foodEmojis[Math.floor(Math.random() * foodEmojis.length)]
         });
-      } else if (r < 0.30) {
+      } else if (r < 0.28) {
         // ひよこモードアイテム
         items.push({
           type: "chick",
-          x: x,
+          x,
           y: randomRange(groundY * 0.3, groundY - 140),
           width: 30,
           height: 30,
           emoji: "🐣"
         });
-      } else if (r < 0.38) {
+      } else if (r < 0.36) {
         // 自転車モードアイテム
         items.push({
           type: "bike",
-          x: x,
+          x,
           y: randomRange(groundY * 0.3, groundY - 140),
           width: 34,
           height: 34,
           emoji: "🚲"
         });
       } else if (r < 0.50) {
-        // 通常の壁
-        const wallHeight = randomRange(50, 120); // もっと高い壁も出す
+        // 通常の壁（高さも多少バラつき）
+        const wallHeight = randomRange(50, 140);
         walls.push({
-          x: x,
+          x,
           y: groundY - wallHeight,
           width: 40,
           height: wallHeight
@@ -355,39 +358,42 @@
             height: h
           });
         }
-      } else if (r < 0.68) {
-        // 犬
-        const dogHeight = 32;
-        dogs.push({
-          x: x,
-          y: groundY - dogHeight,
+      } else if (r < 0.70) {
+        // 亀（地上の敵）
+        const h = 32;
+        turtles.push({
+          x,
+          y: groundY - h,
           width: 40,
-          height: dogHeight,
-          emoji: "🐶"
+          height: h,
+          emoji: "🐢"
         });
-      } else if (r < 0.76) {
-        // 鳥
-        const birdHeight = 32;
+      } else if (r < 0.80) {
+        // キノコ（地上の敵）
+        const h = 32;
+        mushrooms.push({
+          x,
+          y: groundY - h,
+          width: 32,
+          height: h,
+          emoji: "🍄"
+        });
+      } else if (r < 0.95) {
+        // 鳥（空の敵）出現率アップ
+        const h = 32;
         birds.push({
-          x: x,
+          x,
           y: randomRange(80, groundY - 130),
           width: 40,
-          height: birdHeight,
+          height: h,
           emoji: "🐦"
-        });
-      } else if (r < 0.88) {
-        // 穴
-        const holeWidth = randomRange(100, 180);
-        holes.push({
-          x: x,
-          width: holeWidth
         });
       } else {
         // 空中床（プラットフォーム）
         const platWidth = randomRange(100, 160);
         const platY = randomRange(groundY * 0.4, groundY * 0.7);
         platforms.push({
-          x: x,
+          x,
           y: platY,
           width: platWidth,
           height: 20
@@ -479,7 +485,7 @@
 
       const groundY = getGroundY();
 
-      // 無敵時間の減少
+      // 無敵時間
       if (invincibleTimer > 0) {
         invincibleTimer -= dt;
         if (invincibleTimer < 0) invincibleTimer = 0;
@@ -515,7 +521,7 @@
       const prevY = player.y;
       player.y += player.vy * dt;
 
-      // 画面上端の制限＆強制落下開始
+      // 上限（押しっぱなしで上に張り付かないように）
       if (player.y < TOP_LIMIT) {
         player.y = TOP_LIMIT;
         if (player.vy < 0) player.vy = 0;
@@ -528,22 +534,23 @@
       let playerBottom = player.y + player.height;
       let playerTop = player.y;
 
-      // --- プラットフォーム（床）の衝突処理 ---
+      // --- 壁＋空中床をまとめて「足場」として扱う ---
+      const solids = platforms.concat(walls);
       let onPlatform = false;
-      for (const plat of platforms) {
-        const overlapX =
-          player.x + player.width > plat.x &&
-          player.x < plat.x + plat.width;
 
+      for (const solid of solids) {
+        const overlapX =
+          player.x + player.width > solid.x &&
+          player.x < solid.x + solid.width;
         if (!overlapX) continue;
 
         // 上から着地
         if (
           player.vy >= 0 &&
-          playerBottom >= plat.y &&
-          playerBottom <= plat.y + plat.height
+          playerBottom >= solid.y &&
+          playerBottom <= solid.y + solid.height
         ) {
-          player.y = plat.y - player.height;
+          player.y = solid.y - player.height;
           player.vy = 0;
           playerBottom = player.y + player.height;
           playerTop = player.y;
@@ -551,17 +558,16 @@
           break;
         }
 
-        // 下からぶつかった場合 → 上には抜けられないように
+        // 下からぶつかる → 上には抜けられない
         if (
           player.vy < 0 &&
-          playerTop <= plat.y + plat.height &&
-          prevY >= plat.y + plat.height
+          playerTop <= solid.y + solid.height &&
+          prevY >= solid.y + solid.height
         ) {
-          player.y = plat.y + plat.height;
+          player.y = solid.y + solid.height;
           player.vy = 0;
           playerTop = player.y;
           playerBottom = player.y + player.height;
-          // 下から当たっただけなので onPlatform にはしない
           break;
         }
       }
@@ -581,7 +587,7 @@
 
       player.onGround = onGroundNow || onPlatform;
 
-      // 画面下まで落ちた（穴に落ちた延長など）
+      // 画面下まで落ちたとき
       if (player.y > canvas.height && invincibleTimer <= 0) {
         damagePlayer();
         player.y = groundY - player.height;
@@ -610,10 +616,11 @@
       }
 
       walls = moveAndFilter(walls);
+      platforms = moveAndFilter(platforms);
       items = moveAndFilter(items);
       birds = moveAndFilter(birds);
-      dogs = moveAndFilter(dogs);
-      platforms = moveAndFilter(platforms);
+      turtles = moveAndFilter(turtles);
+      mushrooms = moveAndFilter(mushrooms);
 
       holes = holes
         .map(hole => {
@@ -630,20 +637,18 @@
         height: player.height
       };
 
-      // 壁との衝突
-      for (const wall of walls) {
-        if (rectsOverlap(playerRect, wall)) {
+      // 亀・キノコ（地上の敵）
+      for (const t of turtles) {
+        if (rectsOverlap(playerRect, t)) {
           if (invincibleTimer <= 0) {
             damagePlayer();
           }
           break;
         }
       }
-
-      // 犬との衝突
       if (!gameOver) {
-        for (const dog of dogs) {
-          if (rectsOverlap(playerRect, dog)) {
+        for (const m of mushrooms) {
+          if (rectsOverlap(playerRect, m)) {
             if (invincibleTimer <= 0) {
               damagePlayer();
             }
@@ -652,10 +657,10 @@
         }
       }
 
-      // 鳥との衝突
+      // 鳥（空の敵）
       if (!gameOver) {
-        for (const bird of birds) {
-          if (rectsOverlap(playerRect, bird)) {
+        for (const b of birds) {
+          if (rectsOverlap(playerRect, b)) {
             if (invincibleTimer <= 0) {
               damagePlayer();
             }
@@ -664,7 +669,7 @@
         }
       }
 
-      // アイテム取得（＋フローティングテキスト生成）
+      // アイテム取得（＋フローティングテキスト）
       if (!gameOver) {
         items = items.filter(item => {
           if (rectsOverlap(playerRect, item)) {
@@ -683,7 +688,7 @@
             floatTexts.push({
               x: item.x + item.width / 2,
               y: item.y,
-              text: text,
+              text,
               life: 0.8
             });
             return false;
@@ -697,13 +702,17 @@
         score += dt * 5;
       }
 
-      // プレイヤーの回転（空中でクルクル）
-      if (!player.onGround && Math.abs(player.vy) > 10) {
-        player.angle += 6 * dt;   // 約1回転/秒
-      } else {
-        player.angle *= 0.8;
-        if (Math.abs(player.angle) < 0.05) player.angle = 0;
+      // プレイヤーの回転（常に前転）
+      // 右向きに見せるため、描画時に左右反転するモードでは
+      // 逆向きに回転させると「前転」に見える
+      const inNormalMode = !isBikeMode && !isChickMode;
+      let rollDir = 1;
+      if (isBikeMode || inNormalMode) {
+        // scale(-1, 1) するので、見た目上前に転がるように符号反転
+        rollDir = -1;
       }
+      const ROLL_SPEED = 4.0; // rad/sec
+      player.angle += rollDir * ROLL_SPEED * dt;
 
       // フローティングテキスト更新
       floatTexts = floatTexts.filter(ft => {
@@ -743,7 +752,11 @@
         ctx.fillRect(hole.x, groundY, hole.width, canvas.height - groundY);
       }
 
-      // 空中床
+      // 壁・空中床
+      ctx.fillStyle = "#8b4513";
+      for (const wall of walls) {
+        ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+      }
       ctx.fillStyle = "#cccccc";
       for (const plat of platforms) {
         ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
@@ -755,10 +768,9 @@
       ctx.save();
       ctx.translate(cx, cy);
 
-      // 通常（人間）と自転車モードは右向きに見せるため左右反転
       const inNormalMode = !isBikeMode && !isChickMode;
       if (isBikeMode || inNormalMode) {
-        ctx.scale(-1, 1);
+        ctx.scale(-1, 1);  // 右向きに見せる
       }
 
       ctx.rotate(player.angle);
@@ -768,23 +780,22 @@
       ctx.fillText(player.emoji, 0, 0);
       ctx.restore();
 
-      // 壁
-      ctx.fillStyle = "#8b4513";
-      for (const wall of walls) {
-        ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
-      }
-
-      // 犬
+      // 亀
       ctx.font = "28px system-ui";
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
-      for (const dog of dogs) {
-        ctx.fillText(dog.emoji, dog.x + dog.width / 2, dog.y + dog.height / 2);
+      for (const t of turtles) {
+        ctx.fillText(t.emoji, t.x + t.width / 2, t.y + t.height / 2);
       }
 
-      // 鳥
-      for (const bird of birds) {
-        ctx.fillText(bird.emoji, bird.x + bird.width / 2, bird.y + bird.height / 2);
+      // キノコ
+      for (const m of mushrooms) {
+        ctx.fillText(m.emoji, m.x + m.width / 2, m.y + m.height / 2);
+      }
+
+      // 鳥（空の敵）
+      for (const b of birds) {
+        ctx.fillText(b.emoji, b.x + b.width / 2, b.y + b.height / 2);
       }
 
       // アイテム
@@ -792,7 +803,7 @@
         ctx.fillText(item.emoji, item.x + item.width / 2, item.y + item.height / 2);
       }
 
-      // フローティングテキスト（ポイント表示）
+      // フローティングテキスト
       for (const ft of floatTexts) {
         const alpha = Math.max(0, ft.life / 0.8);
         ctx.save();
@@ -810,8 +821,7 @@
       ctx.font = "24px system-ui";
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      const hearts = "❤️".repeat(lives);
-      ctx.fillText(hearts, 10, 10);
+      ctx.fillText("❤️".repeat(lives), 10, 10);
 
       // スコア（右上）
       ctx.fillStyle = "#000000";
