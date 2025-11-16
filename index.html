@@ -1,827 +1,699 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, maximum-scale=1.0, initial-scale=1.0, user-scalable=no">
-    <title>無限横スクロール・ジャンプゲーム - メダルフィーバー版</title>
-    <style>
-        body, html {
-            margin: 0;
-            padding: 0;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            background-color: #333;
-            font-family: 'Arial', sans-serif;
-        }
-        #gameCanvas {
-            display: block;
-            width: 100%;
-            height: 100%;
-            background-color: #87CEEB; /* 初期空色（実際の背景はJSで描画） */
-            touch-action: none;
-        }
-        #audio-elements {
-            display: none; /* オーディオ要素は表示しない */
-        }
-    </style>
+  <meta charset="UTF-8" />
+  <title>無限横スクロール・ジャンプゲーム</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;          /* 画面の縦スクロールを防ぐ */
+      background: #87ceeb;       /* 空の色 */
+    }
+    body {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      touch-action: none;        /* スクロールジェスチャをキャンセル */
+      -webkit-user-select: none;
+      user-select: none;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    canvas {
+      display: block;
+      touch-action: none;
+    }
+  </style>
 </head>
 <body>
+  <canvas id="gameCanvas"></canvas>
 
-<canvas id="gameCanvas"></canvas>
-
-<div id="audio-elements">
-    <!-- BGM -->
-    <audio id="bgm" loop preload="auto">
-        <source src="data:audio/wav;base64,UklGRlIAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABITUNyZXMxAAACAGFnZwAAAAAAAAAAU2FtcGxlcyAAAAAAAACZc3R1ZioAAABkYXRhAAAAAAoBAAAAAEAAAAABAAAAAAAAAAAAAAAAYAAAAA==" type="audio/wav">
-    </audio>
-    <!-- ジャンプ音 -->
-    <audio id="jumpSound" preload="auto">
-        <source src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABITUNyZXMxAAACAGFnZwAAAAAAAAAAU2FtcGxlcyAAAAAAAABuAAAAAA==" type="audio/wav">
-    </audio>
-    <!-- アイテム取得音 -->
-    <audio id="itemSound" preload="auto">
-        <source src="data:audio/wav;base64,UklGRi4AAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABITUNyZXMxAAACAGFnZwAAAAAAAAAAU2FtcGxlcyAAAAAAAACkAAAAAA==" type="audio/wav">
-    </audio>
-    <!-- 障害物飛び越え音 -->
-    <audio id="clearSound" preload="auto">
-        <source src="data:audio/wav;base64,UklGRjIAAWF2aXN0Zm10IBIAAAABAAEARx8AAGAfAAABAAgAAABITUNyZXMxAAACAGFnZwAAAAAAAAAAU2FtcGxlcyAAAAAAAACIAAAASmRhdGEBAEBAQEBAPDw8PDw7Ozs7Ozo6Ojo6Og==" type="audio/wav">
-    </audio>
-    <!-- ゲームオーバー音 (ダメージ音) -->
-    <audio id="gameOverSound" preload="auto">
-        <source src="data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBIAAAABAAEAQB8AAEAfAAABAAgAAABITUNyZXMxAAACAGFnZwAAAAAAAAAAU2FtcGxlcyAAAAAAAADIAAAAAA==" type="audio/wav">
-    </audio>
-</div>
-
-<script>
-    // --- 1. 初期設定と変数定義 ---
+  <script>
+    // ==========================
+    // 基本設定・グローバル変数
+    // ==========================
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
 
-    let canvasWidth = window.innerWidth;
-    let canvasHeight = window.innerHeight;
-    canvas.width = canvasWidth;
-    canvas.height = canvasHeight;
+    let player;
+    let walls = [];
+    let items = [];      // 通常アイテム＋モード切替アイテム
+    let birds = [];
+    let dogs = [];
+    let holes = [];
+    let platforms = [];  // 空中に乗れる床
 
-    // 音源要素の取得
-    const bgm = document.getElementById('bgm');
-    const jumpSound = document.getElementById('jumpSound');
-    const itemSound = document.getElementById('itemSound');
-    const clearSound = document.getElementById('clearSound');
-    const gameOverSound = document.getElementById('gameOverSound'); // ダメージ音として使用
-
-    let isGameOver = false;
-    let isGameStarted = false; // BGM再生管理用のフラグ
     let score = 0;
-    let gameSpeed = 4;  // 難易度で上書きされる
-    let lives = 3;      // 難易度で上書きされる
-    let bestScore = Number(localStorage.getItem('bestScore') || 0);
-    let animationId;
-    let frameCount = 0;
-    let lastSpeedUpScore = 0; // スピードアップをした時点のスコア
-    let hasLostOnce = false;  // 1回でもゲームオーバーしたかどうか（ひよこスタート用）
+    let gameOver = false;
+    let isTouching = false;
 
-    const groundHeight = 50;
+    let lastTime = 0;
 
-    // コンボ関連
-    let combo = 0;
-    let comboTimer = 0; // コンボ継続猶予フレーム
+    const BASE_SCROLL_SPEED = 240;  // 基本スクロール速度（px/sec）
+    const GRAVITY = 900;            // 重力加速度（px/sec^2）
+    const GROUND_RATIO = 0.8;       // 地面の高さ（画面高さに対する比率）
 
-    // フィーバー関連
-    let feverGauge = 0;   // 0〜100（残り時間表示用）
-    let isFever = false;
-    let feverTimer = 0;   // フィーバー時間
-    const FEVER_DURATION = 60 * 5; // 約5秒
+    let spawnTimer = 0;
+    let nextSpawnTime = 1.0;        // 次にオブジェクトを生成するまでの時間（秒）
 
-    // 難易度（必要なら 'easy', 'normal', 'hard' に書き換え）
-    let difficulty = 'normal';
-    function applyDifficultySettings() {
-        if (difficulty === 'easy') {
-            gameSpeed = 3;
-            lives = 5;
-        } else if (difficulty === 'hard') {
-            gameSpeed = 5;
-            lives = 2;
-        } else {
-            gameSpeed = 4;
-            lives = 3;
+    // --- モード管理 ---
+    let isChickMode = false;
+    let chickTimer = 0;
+    const CHICK_MODE_DURATION = 4.0;       // ひよこモード継続時間（秒）
+
+    let isBikeMode = false;
+    let bikeTimer = 0;
+    const BIKE_MODE_DURATION = CHICK_MODE_DURATION * 3; // 自転車モードは3倍の長さ
+
+    // --- サウンド（Web Audio） ---
+    let audioCtx = null;
+
+    // AudioContext を初期化
+    function initAudio() {
+      if (!audioCtx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) {
+          audioCtx = new AC();
         }
-    }
-    applyDifficultySettings();
-
-    // 主人公 (Player)
-    const playerSize = 40;
-    let baseEmoji = '🏃';  // 通常時のベースキャラ（後で🐥に変わることもある）
-    let player = {
-        x: 50,
-        y: canvasHeight - groundHeight - playerSize,
-        width: playerSize * 0.8,
-        height: playerSize * 0.8,
-        dy: 0,
-        gravity: 0.8,
-        jumpPower: 14,
-        isJumping: false,
-        extraJumpUsed: false, // 追加ジャンプ（2段ジャンプ）したかどうか
-        swingPhase: 0,        // 揺れ用フェーズ
-        rotation: 0,          // 揺れ角度
-        isInvincible: false,  // 無敵状態フラグ
-        invincibleTimer: 0,   // 無敵時間タイマー
-        emoji: baseEmoji      // プレイヤーの絵文字
-    };
-
-    // ゲーム要素 (障害物、アイテム) の配列
-    let elements = []; // { x, y, width, height, type, emoji, cleared }
-
-    // ポップアップ表示用の配列
-    let popups = []; // { x, y, text, color, dy, opacity }
-
-    // アイテムと障害物の絵文字リスト
-    const itemEmojis = ['🍔', '🍰', '🍇', '🍌', '🍕', '🍩']; // 通常アイテム
-    const medalEmojis = ['🥇', '🥈', '🥉', '🏅'];           // メダルアイテム（フィーバー用）
-    const groundObstacleEmojis = ['🐢', '🍄', '🌵', '🚧']; // 地上障害物
-    const airObstacleEmojis = ['🦅', '🦇', '🐝', '☁️'];   // 空中障害物
-    const wallEmojis = ['🧱', '🏛️', '🗼'];               // 壁の絵文字
-
-    // --- 2. 汎用：スクロール速度（フィーバー中は加速） ---
-    function getScrollSpeed() {
-        return gameSpeed + (isFever ? 2 : 0); // フィーバー中は +2 速く
+      }
     }
 
-    // --- 3. フィーバー開始処理 ---
-    function startFever() {
-        isFever = true;
-        feverTimer = FEVER_DURATION;
-        feverGauge = 100;
-        player.isInvincible = true;
-        player.emoji = '🚲'; // 自転車に変身
+    // AudioContext を再開（iOS用）
+    function resumeAudio() {
+      if (audioCtx && audioCtx.state === "suspended") {
+        audioCtx.resume();
+      }
     }
 
-    // --- 4. イベントリスナー (操作) ---
+    // 短いビープ音を鳴らす
+    function playBeep(frequency, duration, type = "sine") {
+      if (!audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = type;
+      osc.frequency.value = frequency;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
 
-    // BGMや効果音を初期化・アンロックするための関数
-    function unlockAudioContext() {
-        if (isGameStarted) return;
+      const now = audioCtx.currentTime;
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.exponentialRampToValueAtTime(0.3, now + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + duration);
 
-        console.log("First interaction: Unlocking audio context...");
-        bgm.volume = 0.5;
+      osc.start(now);
+      osc.stop(now + duration + 0.05);
+    }
 
-        const allAudio = [bgm, jumpSound, itemSound, clearSound, gameOverSound];
+    function playItemSound() {
+      // 通常アイテム用：高めのピッ
+      playBeep(880, 0.15);
+    }
 
-        allAudio.forEach(audio => {
-            const playPromise = audio.play();
-            if (playPromise !== undefined) {
-                playPromise.then(_ => {
-                    if (audio !== bgm) {
-                        audio.pause();
-                        audio.currentTime = 0;
-                    }
-                }).catch(error => {
-                    console.log(`Audio unlock failed for ${audio.id}:`, error);
-                });
-            }
+    function playChickSound() {
+      // ひよこモード用：ピッ → さらに高いピッ
+      playBeep(660, 0.10);
+      setTimeout(() => playBeep(990, 0.12), 120);
+    }
+
+    function playBikeSound() {
+      // 自転車モード用：低め → 中くらい
+      playBeep(440, 0.10);
+      setTimeout(() => playBeep(660, 0.12), 120);
+    }
+
+    function playHitSound() {
+      // ゲームオーバー用：低めのブー
+      playBeep(220, 0.40, "square");
+    }
+
+    // ==========================
+    // 画面サイズ・地面の高さ
+    // ==========================
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+
+    function getGroundY() {
+      return canvas.height * GROUND_RATIO;
+    }
+
+    // ==========================
+    // ゲーム初期化・リスタート
+    // ==========================
+    function resetGame() {
+      const groundY = getGroundY();
+
+      // プレイヤーの初期位置（画面左側）
+      player = {
+        x: canvas.width * 0.15,
+        y: groundY - 40,
+        width: 40,
+        height: 40,
+        vy: 0,
+        emoji: "🧍"
+      };
+
+      // 各オブジェクトの配列をリセット
+      walls = [];
+      items = [];
+      birds = [];
+      dogs = [];
+      holes = [];
+      platforms = [];
+
+      score = 0;
+      gameOver = false;
+      spawnTimer = 0;
+      nextSpawnTime = randomRange(0.8, 1.6);
+
+      // モード解除
+      isChickMode = false;
+      chickTimer = 0;
+      isBikeMode = false;
+      bikeTimer = 0;
+    }
+
+    // ==========================
+    // ユーティリティ関数
+    // ==========================
+    function randomRange(min, max) {
+      return Math.random() * (max - min) + min;
+    }
+
+    // 矩形同士の当たり判定
+    function rectsOverlap(a, b) {
+      return (
+        a.x < b.x + b.width &&
+        a.x + a.width > b.x &&
+        a.y < b.y + b.height &&
+        a.y + a.height > b.y
+      );
+    }
+
+    // プレイヤーが穴の真上（地面の範囲）にいるかどうか
+    function isPlayerOverHole(p) {
+      const pxCenter = p.x + p.width / 2;
+      for (const hole of holes) {
+        if (pxCenter > hole.x && pxCenter < hole.x + hole.width) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // ==========================
+    // モード切り替え
+    // ==========================
+    function activateChickMode() {
+      isChickMode = true;
+      chickTimer = CHICK_MODE_DURATION;
+      // 自転車モード中だったら終了
+      if (isBikeMode) {
+        isBikeMode = false;
+        bikeTimer = 0;
+      }
+      player.emoji = "🐥";
+      playChickSound();
+    }
+
+    function activateBikeMode() {
+      isBikeMode = true;
+      bikeTimer = BIKE_MODE_DURATION;
+      // ひよこモード中だったら終了
+      if (isChickMode) {
+        isChickMode = false;
+        chickTimer = 0;
+      }
+      player.emoji = "🚴";
+      playBikeSound();
+    }
+
+    function updateModeTimers(dt) {
+      if (isChickMode) {
+        chickTimer -= dt;
+        if (chickTimer <= 0) {
+          isChickMode = false;
+          chickTimer = 0;
+          // ほかのモードがなければ人間に戻す
+          if (!isBikeMode) {
+            player.emoji = "🧍";
+          }
+        }
+      }
+
+      if (isBikeMode) {
+        bikeTimer -= dt;
+        if (bikeTimer <= 0) {
+          isBikeMode = false;
+          bikeTimer = 0;
+          if (!isChickMode) {
+            player.emoji = "🧍";
+          }
+        }
+      }
+    }
+
+    function getCurrentScrollSpeed() {
+      let speed = BASE_SCROLL_SPEED;
+      if (isChickMode) {
+        speed = BASE_SCROLL_SPEED * 0.6;   // ひよこモード中はゆっくり
+      }
+      if (isBikeMode) {
+        speed = BASE_SCROLL_SPEED * 1.3;   // 自転車モード中はちょっと速く
+      }
+      return speed;
+    }
+
+    // ==========================
+    // オブジェクト生成
+    // ==========================
+    function spawnObject() {
+      const groundY = getGroundY();
+      const x = canvas.width + 40; // 画面右端の少し外から出現
+
+      const r = Math.random();
+
+      if (r < 0.25) {
+        // 通常アイテム（食べ物）
+        const foodEmojis = ["🍎", "🍌", "🍕", "🍩", "🍔", "🍇"];
+        items.push({
+          type: "score",
+          x: x,
+          y: randomRange(groundY * 0.3, groundY - 120),
+          width: 28,
+          height: 28,
+          emoji: foodEmojis[Math.floor(Math.random() * foodEmojis.length)]
         });
-
-        isGameStarted = true;
+      } else if (r < 0.35) {
+        // ひよこモードアイテム
+        items.push({
+          type: "chick",
+          x: x,
+          y: randomRange(groundY * 0.3, groundY - 140),
+          width: 30,
+          height: 30,
+          emoji: "🐣"
+        });
+      } else if (r < 0.45) {
+        // 自転車モードアイテム
+        items.push({
+          type: "bike",
+          x: x,
+          y: randomRange(groundY * 0.3, groundY - 140),
+          width: 34,
+          height: 34,
+          emoji: "🚲"
+        });
+      } else if (r < 0.6) {
+        // 壁（箱）
+        const wallHeight = 60;
+        walls.push({
+          x: x,
+          y: groundY - wallHeight,
+          width: 40,
+          height: wallHeight
+        });
+      } else if (r < 0.7) {
+        // 犬（地面の敵）
+        const dogHeight = 32;
+        dogs.push({
+          x: x,
+          y: groundY - dogHeight,
+          width: 40,
+          height: dogHeight,
+          emoji: "🐶"
+        });
+      } else if (r < 0.8) {
+        // 鳥（空中の敵）
+        const birdHeight = 32;
+        birds.push({
+          x: x,
+          y: randomRange(80, groundY - 130),
+          width: 40,
+          height: birdHeight,
+          emoji: "🐦"
+        });
+      } else if (r < 0.9) {
+        // 穴（地面が途切れる）
+        const holeWidth = randomRange(100, 180);
+        holes.push({
+          x: x,
+          width: holeWidth
+        });
+      } else {
+        // 空中に乗れる床（プラットフォーム）
+        const platWidth = randomRange(100, 160);
+        const platY = randomRange(groundY * 0.4, groundY * 0.7);
+        platforms.push({
+          x: x,
+          y: platY,
+          width: platWidth,
+          height: 20
+        });
+      }
     }
 
-    canvas.addEventListener('touchstart', (e) => {
+    // ==========================
+    // 入力（タップ・クリック）処理
+    // ==========================
+    function handleTouchStart(e) {
+      e.preventDefault();
+
+      // サウンド初期化／再開
+      if (!audioCtx) {
+        initAudio();
+      } else {
+        resumeAudio();
+      }
+
+      if (gameOver) {
+        resetGame();
+      }
+      isTouching = true;
+    }
+
+    function handleTouchEnd(e) {
+      e.preventDefault();
+      isTouching = false;
+    }
+
+    function setupInput() {
+      // タッチ操作
+      canvas.addEventListener("touchstart", handleTouchStart, { passive: false });
+      canvas.addEventListener("touchend", handleTouchEnd, { passive: false });
+
+      // iOSでのスクロール防止
+      document.addEventListener("touchmove", function (e) {
         e.preventDefault();
+      }, { passive: false });
 
-        // 最初のタップでオーディオをアンロック
-        if (!isGameStarted) {
-            unlockAudioContext();
-            // BGM開始
-            bgm.currentTime = 0;
-            bgm.play().catch(err => console.log("BGM start failed", err));
-        }
-
-        if (isGameOver) {
-            restartGame();
-        } else {
-            let didJump = false;
-
-            // 1回目のジャンプ（地面 or プラットフォーム上）
-            if (!player.isJumping) {
-                player.dy = -player.jumpPower;
-                player.isJumping = true;
-                player.extraJumpUsed = false;
-                didJump = true;
-            }
-            // 2回目の追加ジャンプ（空中で1回だけ）
-            else if (!player.extraJumpUsed) {
-                player.dy = -player.jumpPower;
-                player.extraJumpUsed = true;
-                didJump = true;
-            }
-
-            if (didJump && isGameStarted) {
-                jumpSound.currentTime = 0;
-                jumpSound.play().catch(e2 => console.log("Jump sound failed", e2));
-            }
-        }
-    });
-
-    canvas.addEventListener('touchend', (e) => {
+      // マウス操作（PCテスト用）
+      canvas.addEventListener("mousedown", (e) => {
         e.preventDefault();
-        // ボタン押しっぱなしジャンプではないので、特に何もしない
-    });
-
-    window.addEventListener('resize', () => {
-        canvasWidth = window.innerWidth;
-        canvasHeight = window.innerHeight;
-        canvas.width = canvasWidth;
-        canvas.height = canvasHeight;
-        if (player.y > canvasHeight - groundHeight - playerSize) {
-            player.y = canvasHeight - groundHeight - playerSize;
-        }
-    });
-
-    // --- 5. 主人公 (Player) の更新と描画 ---
-
-    function updatePlayer() {
-        player.dy += player.gravity;
-        player.y += player.dy;
-
-        const groundY = canvasHeight - groundHeight - playerSize;
-        let onPlatform = false;
-
-        // 階段状の壁に乗っているかチェック
-        for (let el of elements) {
-            if (el.type === 'stepWall' && player.dy >= 0) {
-                const playerBottom = player.y + player.height;
-                const playerRight = player.x + player.width;
-
-                if (playerRight > el.x && player.x < el.x + el.width &&
-                    playerBottom >= el.y && playerBottom <= el.y + player.height / 2) {
-                    player.y = el.y - player.height;
-                    player.dy = 0;
-                    onPlatform = true;
-                    player.isJumping = false;
-                    player.extraJumpUsed = false;
-                    break;
-                }
-            }
-        }
-
-        // 地面に着地
-        if (!onPlatform && player.y >= groundY) {
-            player.y = groundY;
-            player.dy = 0;
-            player.isJumping = false;
-            player.extraJumpUsed = false;
-        } else if (player.y < 0) { // 画面上部制限
-            player.y = 0;
-            player.dy = 0;
-        }
-
-        // 揺れ(小さく左右にゆらゆら) - フィーバー中は少し大きく揺れる
-        player.swingPhase += player.isJumping ? 0.25 : 0.15;
-        const swingAmp = isFever ? 0.6 : 0.3;
-        player.rotation = swingAmp * Math.sin(player.swingPhase);
-
-        // 無敵時間の更新
-        if (player.isInvincible && !isFever) {
-            // フィーバー以外の無敵（ダメージ後の一瞬無敵）のみタイマーで管理
-            player.invincibleTimer--;
-            if (player.invincibleTimer <= 0) {
-                player.isInvincible = false;
-            }
-        }
-    }
-
-    function drawPlayer() {
-        ctx.save();
-
-        // 無敵中は点滅させる
-        if (player.isInvincible) {
-            if (Math.floor(player.invincibleTimer / 10) % 2 === 0 && !isFever) {
-                ctx.globalAlpha = 0.5;
-            }
-        }
-
-        ctx.translate(player.x + player.width / 2, player.y + player.height / 2);
-        ctx.rotate(player.rotation);
-        ctx.scale(-1, 1); // 右向きにするため左右反転
-
-        ctx.font = `${playerSize}px Arial`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(player.emoji, 0, 0);
-
-        ctx.restore();
-    }
-
-    // --- 6. 背景の描画（ステージチェンジ＋フィーバー考慮） ---
-    function drawBackground() {
-        if (isFever) {
-            // フィーバー中は金色っぽく
-            ctx.fillStyle = '#FFD700';
-        } else if (score < 300) {
-            // 昼
-            ctx.fillStyle = '#87CEEB';
-        } else if (score < 700) {
-            // 夕方
-            ctx.fillStyle = '#FFA500';
+        if (!audioCtx) {
+          initAudio();
         } else {
-            // 夜
-            ctx.fillStyle = '#191970';
+          resumeAudio();
         }
-        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+        if (gameOver) {
+          resetGame();
+        }
+        isTouching = true;
+      });
+      canvas.addEventListener("mouseup", (e) => {
+        e.preventDefault();
+        isTouching = false;
+      });
+      canvas.addEventListener("mouseleave", () => {
+        isTouching = false;
+      });
     }
 
-    // --- 7. ゲーム要素 (障害物・アイテム) の管理 ---
+    // ==========================
+    // ゲーム更新処理
+    // ==========================
+    function update(dt) {
+      if (gameOver) return;
 
-    function spawnElements() {
-        frameCount++;
+      const groundY = getGroundY();
 
-        let speedForSpawn = getScrollSpeed();
-        let baseInterval = Math.floor(90 / (speedForSpawn / 4));
-        if (difficulty === 'easy') baseInterval += 10;
-        if (difficulty === 'hard') baseInterval -= 10;
-        if (baseInterval < 30) baseInterval = 30;
+      // モードの残り時間を更新
+      updateModeTimers(dt);
 
-        if (frameCount % baseInterval === 0) {
-            const randomType = Math.random();
-            const elementSize = 40;
-            const groundY = canvasHeight - groundHeight;
+      // スクロール速度（モードで変化）
+      const scrollSpeed = getCurrentScrollSpeed();
+      const scroll = scrollSpeed * dt;
 
-            const lastElement = elements[elements.length - 1];
-            const canSpawnHole = !lastElement || (lastElement.type !== 'hole' && lastElement.x < canvasWidth - 100);
+      // --- プレイヤーの更新 ---
+      if (isTouching) {
+        // タップしている間は上向きの一定速度
+        player.vy = -300;
+      } else {
+        // タップしていない間は重力で落下
+        player.vy += GRAVITY * dt;
+      }
+      player.y += player.vy * dt;
 
-            if (randomType < 0.1 && canSpawnHole) {
-                // 10% 穴
-                elements.push({
-                    x: canvasWidth,
-                    y: groundY,
-                    width: 80 + Math.random() * 40,
-                    height: groundHeight,
-                    type: 'hole',
-                    emoji: '',
-                    cleared: false
-                });
-            } else if (randomType < 0.3) {
-                // 20% 壁 (ランダムな高さ、階段状も含む)
-                let wallHeight = elementSize + Math.random() * 50;
-                let wallType = 'wall';
-                if (Math.random() < 0.3) { wallHeight = elementSize * 2 + Math.random() * 50; }
+      // 画面上端の制限
+      if (player.y < 20) {
+        player.y = 20;
+        if (player.vy < 0) player.vy = 0;
+      }
 
-                if (Math.random() < 0.4 && wallHeight > elementSize + 20) {
-                    wallType = 'stepWall';
-                    const numSteps = 1 + Math.floor(Math.random() * 2);
-                    const stepHeight = wallHeight / numSteps;
-                    const stepWidth = (elementSize * 1.5) / numSteps;
+      let playerBottom = player.y + player.height;
 
-                    for (let i = 0; i < numSteps; i++) {
-                        elements.push({
-                            x: canvasWidth + i * stepWidth,
-                            y: groundY - (i + 1) * stepHeight,
-                            width: stepWidth,
-                            height: (i + 1) * stepHeight,
-                            type: 'stepWall',
-                            emoji: wallEmojis[Math.floor(Math.random() * wallEmojis.length)],
-                            color: '#A0522D',
-                            cleared: false
-                        });
-                    }
-                } else {
-                    elements.push({
-                        x: canvasWidth,
-                        y: groundY - wallHeight,
-                        width: elementSize + Math.random() * 20,
-                        height: wallHeight,
-                        type: wallType,
-                        emoji: wallEmojis[Math.floor(Math.random() * wallEmojis.length)],
-                        color: '#8B4513',
-                        cleared: false
-                    });
-                }
-            } else if (randomType < 0.5) {
-                // 20% 地上障害物
-                elements.push({
-                    x: canvasWidth,
-                    y: groundY - elementSize,
-                    width: elementSize,
-                    height: elementSize,
-                    type: 'groundObstacle',
-                    emoji: groundObstacleEmojis[Math.floor(Math.random() * groundObstacleEmojis.length)],
-                    cleared: false
-                });
-            } else if (randomType < 0.7) {
-                // 20% 空中敵
-                const randomY = Math.random() * (canvasHeight - groundHeight - playerSize * 3) + playerSize;
-                elements.push({
-                    x: canvasWidth,
-                    y: randomY,
-                    width: elementSize,
-                    height: elementSize,
-                    type: 'airObstacle',
-                    emoji: airObstacleEmojis[Math.floor(Math.random() * airObstacleEmojis.length)],
-                    cleared: false
-                });
-            } else {
-                // 30% アイテム（通常アイテム or メダル）
-                const randomY = Math.random() * (canvasHeight - groundHeight - playerSize * 2);
-                const isMedal = Math.random() < 0.3; // 30%くらいはメダル
-                elements.push({
-                    x: canvasWidth,
-                    y: randomY,
-                    width: 30,
-                    height: 30,
-                    type: isMedal ? 'medal' : 'item',
-                    emoji: isMedal
-                        ? medalEmojis[Math.floor(Math.random() * medalEmojis.length)]
-                        : itemEmojis[Math.floor(Math.random() * itemEmojis.length)],
-                    cleared: false
-                });
+      // --- プラットフォーム（空中床）との当たり（上から落ちてきた場合のみ着地） ---
+      let onPlatform = false;
+      for (const plat of platforms) {
+        if (
+          player.vy >= 0 &&                 // 下向きに動いている
+          playerBottom >= plat.y &&         // プレイヤーの下が床より下
+          playerBottom <= plat.y + plat.height && // めり込みすぎていない
+          player.x + player.width > plat.x &&
+          player.x < plat.x + plat.width
+        ) {
+          player.y = plat.y - player.height;
+          player.vy = 0;
+          playerBottom = player.y + player.height;
+          onPlatform = true;
+          break;
+        }
+      }
+
+      // --- 地面・穴の処理 ---
+      if (!onPlatform && player.vy >= 0 && playerBottom >= groundY) {
+        if (isPlayerOverHole(player)) {
+          // 穴に落ちた
+          endGame();
+        } else {
+          // 通常の地面で止まる
+          player.y = groundY - player.height;
+          player.vy = 0;
+          playerBottom = player.y + player.height;
+        }
+      }
+
+      // 画面下まで落ちた場合もゲームオーバー（穴に落ちた延長など）
+      if (player.y > canvas.height) {
+        endGame();
+      }
+
+      // --- 背景オブジェクト（障害物・アイテムなど）の移動 ---
+      function moveAndFilter(list) {
+        return list
+          .map(obj => {
+            obj.x -= scroll;
+            return obj;
+          })
+          .filter(obj => obj.x + (obj.width || 0) > -50);
+      }
+
+      walls = moveAndFilter(walls);
+      items = moveAndFilter(items);
+      birds = moveAndFilter(birds);
+      dogs = moveAndFilter(dogs);
+      platforms = moveAndFilter(platforms);
+
+      // 穴は幅だけ持っているので別処理
+      holes = holes
+        .map(hole => {
+          hole.x -= scroll;
+          return hole;
+        })
+        .filter(hole => hole.x + hole.width > -50);
+
+      // --- 当たり判定 ---
+      const playerRect = {
+        x: player.x,
+        y: player.y,
+        width: player.width,
+        height: player.height
+      };
+
+      // 壁との衝突
+      for (const wall of walls) {
+        if (rectsOverlap(playerRect, wall)) {
+          endGame();
+          break;
+        }
+      }
+
+      // 犬との衝突
+      if (!gameOver) {
+        for (const dog of dogs) {
+          if (rectsOverlap(playerRect, dog)) {
+            endGame();
+            break;
+          }
+        }
+      }
+
+      // 鳥との衝突
+      if (!gameOver) {
+        for (const bird of birds) {
+          if (rectsOverlap(playerRect, bird)) {
+            endGame();
+            break;
+          }
+        }
+      }
+
+      // アイテム取得
+      if (!gameOver) {
+        items = items.filter(item => {
+          if (rectsOverlap(playerRect, item)) {
+            if (item.type === "score") {
+              score += 10;
+              playItemSound();
+            } else if (item.type === "chick") {
+              activateChickMode();
+            } else if (item.type === "bike") {
+              activateBikeMode();
             }
-        }
+            return false; // 消滅
+          }
+          return true;
+        });
+      }
+
+      // --- スコア（時間経過） ---
+      if (!gameOver) {
+        score += dt * 5; // 生存時間に応じてスコア加算
+      }
+
+      // --- オブジェクト生成 ---
+      spawnTimer += dt;
+      if (spawnTimer >= nextSpawnTime) {
+        spawnObject();
+        spawnTimer = 0;
+        nextSpawnTime = randomRange(0.8, 1.6);
+      }
     }
 
-    function updateAndDrawElements() {
-        ctx.font = '40px Arial';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-
-        const currentSpeed = getScrollSpeed();
-
-        for (let i = elements.length - 1; i >= 0; i--) {
-            let el = elements[i];
-            el.x -= currentSpeed;
-
-            if (el.type === 'hole') {
-                // 描画なし（地面側で処理）
-            } else if (el.type === 'wall' || el.type === 'stepWall') {
-                ctx.fillStyle = el.color || '#8B4513';
-                ctx.fillRect(el.x, el.y, el.width, el.height);
-                ctx.font = '30px Arial';
-                ctx.fillText(el.emoji, el.x + el.width / 2 - 15, el.y + el.height / 2 - 15);
-            } else {
-                ctx.font = '40px Arial';
-                ctx.fillText(el.emoji, el.x, el.y);
-            }
-
-            if (el.x + el.width < 0) {
-                elements.splice(i, 1);
-            }
-        }
+    // ==========================
+    // ゲームオーバー処理
+    // ==========================
+    function endGame() {
+      if (!gameOver) {
+        gameOver = true;
+        playHitSound();
+      }
     }
 
-    // --- 8. 地面の描画 (穴を考慮) ---
+    // ==========================
+    // 描画処理
+    // ==========================
+    function draw() {
+      const groundY = getGroundY();
 
-    function drawGround() {
-        ctx.fillStyle = '#4CAF50';
+      // 背景（空）
+      ctx.fillStyle = "#87ceeb";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-        let currentX = 0;
-        let sortedHoles = elements
-            .filter(el => el.type === 'hole')
-            .sort((a, b) => a.x - b.x);
+      // 地面（まず全面に描画）
+      ctx.fillStyle = "#3c7c1b";
+      ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
 
-        for (let hole of sortedHoles) {
-            if (hole.x > currentX) {
-                ctx.fillRect(currentX, canvasHeight - groundHeight, hole.x - currentX, groundHeight);
-            }
-            currentX = hole.x + hole.width;
-        }
+      // 穴（地面の一部を空の色で塗りつぶして消す）
+      ctx.fillStyle = "#87ceeb";
+      for (const hole of holes) {
+        ctx.fillRect(hole.x, groundY, hole.width, canvas.height - groundY);
+      }
 
-        if (currentX < canvasWidth) {
-            ctx.fillRect(currentX, canvasHeight - groundHeight, canvasWidth - currentX, groundHeight);
-        }
+      // 空中に乗れる床（プラットフォーム）
+      ctx.fillStyle = "#cccccc";
+      for (const plat of platforms) {
+        ctx.fillRect(plat.x, plat.y, plat.width, plat.height);
+      }
+
+      // プレイヤーの描画（絵文字）
+      ctx.font = "32px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(player.emoji, player.x + player.width / 2, player.y + player.height / 2);
+
+      // 壁（箱）の描画
+      ctx.fillStyle = "#8b4513";
+      for (const wall of walls) {
+        ctx.fillRect(wall.x, wall.y, wall.width, wall.height);
+      }
+
+      // 犬の描画
+      ctx.font = "28px system-ui";
+      for (const dog of dogs) {
+        ctx.fillText(dog.emoji, dog.x + dog.width / 2, dog.y + dog.height / 2);
+      }
+
+      // 鳥の描画
+      for (const bird of birds) {
+        ctx.fillText(bird.emoji, bird.x + bird.width / 2, bird.y + bird.height / 2);
+      }
+
+      // アイテム（食べ物＋モードアイテム）の描画
+      for (const item of items) {
+        ctx.fillText(item.emoji, item.x + item.width / 2, item.y + item.height / 2);
+      }
+
+      // スコア表示（右上）
+      ctx.fillStyle = "#000000";
+      ctx.font = "20px system-ui";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "top";
+      ctx.fillText("Score: " + Math.floor(score), canvas.width - 16, 10);
+
+      // ゲームオーバー表示
+      if (gameOver) {
+        ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+
+        ctx.font = "36px system-ui";
+        ctx.fillText("Game Over", canvas.width / 2, canvas.height / 2 - 20);
+
+        ctx.font = "24px system-ui";
+        ctx.fillText("Score: " + Math.floor(score), canvas.width / 2, canvas.height / 2 + 20);
+
+        ctx.font = "18px system-ui";
+        ctx.fillText("画面をタップしてリスタート", canvas.width / 2, canvas.height / 2 + 60);
+      }
     }
 
-    // --- 9. スコア加算（コンボ・フィーバー対応） ---
+    // ==========================
+    // メインループ
+    // ==========================
+    function gameLoop(timestamp) {
+      if (!lastTime) lastTime = timestamp;
+      const dt = (timestamp - lastTime) / 1000;
+      lastTime = timestamp;
 
-    function addScore(base, popupX, popupY, color) {
-        combo++;
-        comboTimer = 60; // 約1秒以内に成功するとコンボ継続
+      update(dt);
+      draw();
 
-        let effectiveBase = base;
-        if (isFever) {
-            // フィーバー中は得点2倍
-            effectiveBase = base * 2;
-        }
-
-        const multiplier = 1 + combo * 0.2; // 1.0, 1.2, 1.4...
-        const gained = Math.floor(effectiveBase * multiplier);
-        score += gained;
-
-        if (base > 0) { // baseが0のときはポップアップ不要ならここで制御してもOK
-            popups.push({
-                x: popupX,
-                y: popupY,
-                text: `+${gained}`,
-                color: color || 'white',
-                dy: -2,
-                opacity: 1
-            });
-        }
+      requestAnimationFrame(gameLoop);
     }
 
-    // --- 10. 当たり判定とスコア加算、ポップアップ表示 ---
-
-    function checkCollisions() {
-        // 無敵中（フィーバー）の場合、ダメージ判定はスキップ（飛び越え判定だけ別関数で実施）
-        if (isFever) {
-            checkClearance();
-            return;
-        }
-
-        for (let i = elements.length - 1; i >= 0; i--) {
-            let el = elements[i];
-
-            const isColliding =
-                player.x < el.x + el.width &&
-                player.x + player.width > el.x &&
-                player.y < el.y + el.height &&
-                player.y + player.height > el.y;
-
-            if (isColliding) {
-                if (el.type === 'item') {
-                    // 通常アイテム取得（フィーバーは発動しない）
-                    addScore(30, el.x, el.y, 'gold');
-
-                    itemSound.currentTime = 0;
-                    itemSound.play().catch(e => console.log("Item sound failed", e));
-                    elements.splice(i, 1);
-
-                } else if (el.type === 'medal') {
-                    // メダル取得 → 即フィーバータイム
-                    // フィーバー自体が美味しいので、直接の得点は控えめ（または0でもOK）
-                    addScore(10, el.x, el.y, 'gold');
-
-                    itemSound.currentTime = 0;
-                    itemSound.play().catch(e => console.log("Medal sound failed", e));
-
-                    startFever();
-                    elements.splice(i, 1);
-
-                } else if (
-                    el.type === 'wall' || el.type === 'groundObstacle' || el.type === 'airObstacle' || el.type === 'stepWall' ||
-                    (el.type === 'hole' && player.y + player.height >= canvasHeight - groundHeight)
-                ) {
-                    // 障害物、敵、または穴に落ちた
-                    lives--;
-                    combo = 0;
-                    comboTimer = 0;
-
-                    gameOverSound.currentTime = 0;
-                    gameOverSound.play().catch(e => console.log("Damage sound failed", e));
-
-                    if (lives <= 0) {
-                        isGameOver = true;
-                        hasLostOnce = true; // 1回でもゲームオーバーしたことを記録
-                    } else {
-                        // まだライフが残っている → しばらく無敵
-                        player.isInvincible = true;
-                        player.invincibleTimer = 120; // 2秒間の無敵 (60fps * 2s)
-
-                        if (el.type !== 'hole') {
-                            // 穴以外は、当たった障害物を消す
-                            elements.splice(i, 1);
-                        } else {
-                            // 穴に落ちた場合は、プレイヤーを地面に戻して少し跳ね返る
-                            player.y = canvasHeight - groundHeight - playerSize;
-                            player.dy = -player.jumpPower * 0.5;
-                            player.isJumping = true;
-                            player.extraJumpUsed = false;
-                        }
-                    }
-                }
-            }
-        }
-
-        checkClearance(); // 飛び越え判定
+    // ==========================
+    // 初期化
+    // ==========================
+    function init() {
+      resizeCanvas();
+      resetGame();
+      setupInput();
+      requestAnimationFrame(gameLoop);
     }
 
-    // 飛び越え判定を分離
-    function checkClearance() {
-        for (let el of elements) {
-            if (el.cleared) continue; // 既に加点済みのものはスキップ
+    window.addEventListener("resize", () => {
+      resizeCanvas();
+      resetGame(); // 画面サイズ変更時はリセット
+    });
 
-            // プレイヤーが障害物を完全に越えたか
-            if (player.x > el.x + el.width) {
-                if (
-                    (el.type === 'wall' || el.type === 'groundObstacle' || el.type === 'hole' || el.type === 'stepWall') &&
-                    player.y < canvasHeight - groundHeight - player.height / 2
-                ) {
-                    addScore(10, el.x, el.y, 'lightgreen');
-                    clearSound.currentTime = 0;
-                    clearSound.play().catch(e => console.log("Clear sound failed", e));
-                    el.cleared = true;
-                } else if (el.type === 'airObstacle' && player.y < el.y + el.height) {
-                    addScore(20, el.x, el.y, 'skyblue');
-                    clearSound.currentTime = 0;
-                    clearSound.play().catch(e => console.log("Clear sound failed", e));
-                    el.cleared = true;
-                }
-            }
-        }
-    }
-
-    // --- 11. UI (スコア・ライフ・コンボ・フィーバーゲージ・ポップアップ) 描画 ---
-
-    function drawUI() {
-        // スコア・ベストスコア描画
-        ctx.fillStyle = 'black';
-        ctx.font = '24px Arial';
-        ctx.textAlign = 'right';
-        ctx.textBaseline = 'top';
-        ctx.fillText(`Score: ${score}`, canvasWidth - 20, 20);
-        ctx.fillText(`Best: ${bestScore}`, canvasWidth - 20, 50);
-
-        // ライフ描画
-        let hearts = '';
-        for (let i = 0; i < lives; i++) {
-            hearts += '❤️';
-        }
-        ctx.fillStyle = 'red';
-        ctx.font = '24px Arial';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.fillText(hearts, 20, 20);
-
-        // コンボ表示
-        if (combo > 0) {
-            ctx.fillStyle = 'yellow';
-            ctx.font = '18px Arial';
-            ctx.textAlign = 'left';
-            ctx.textBaseline = 'top';
-            ctx.fillText(`Combo: ${combo}`, 20, 50);
-        }
-
-        // フィーバーゲージ（残り時間バー）
-        const barWidth = 200;
-        const barHeight = 10;
-        const barX = (canvasWidth - barWidth) / 2;
-        const barY = 20;
-
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = 'white';
-        ctx.strokeRect(barX, barY, barWidth, barHeight);
-
-        ctx.fillStyle = isFever ? 'gold' : 'deepskyblue';
-        ctx.fillRect(barX, barY, barWidth * (feverGauge / 100), barHeight);
-
-        if (isFever) {
-            ctx.fillStyle = 'black';
-            ctx.font = '16px Arial';
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            ctx.fillText('FEVER!!', canvasWidth / 2, barY + 14);
-        }
-    }
-
-    function drawPopups() {
-        for (let i = popups.length - 1; i >= 0; i--) {
-            let p = popups[i];
-            p.y += p.dy;
-            p.opacity -= 0.02;
-
-            if (p.opacity <= 0) {
-                popups.splice(i, 1);
-            } else {
-                let colorString = '255, 255, 255'; // default white
-                if (p.color === 'gold') colorString = '255, 215, 0';
-                else if (p.color === 'lightgreen') colorString = '144, 238, 144';
-                else if (p.color === 'skyblue') colorString = '135, 206, 235';
-
-                ctx.fillStyle = `rgba(${colorString}, ${p.opacity})`;
-                ctx.font = 'bold 20px Arial';
-                ctx.textAlign = 'center';
-                ctx.textBaseline = 'middle';
-                ctx.fillText(p.text, p.x + 20, p.y);
-            }
-        }
-    }
-
-    function drawGameOver() {
-        cancelAnimationFrame(animationId);
-        bgm.pause(); // BGM停止
-
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
-        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
-
-        ctx.fillStyle = 'white';
-        ctx.font = 'bold 40px Arial';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-
-        ctx.fillText('Game Over', canvasWidth / 2, canvasHeight / 2 - 60);
-        ctx.font = '30px Arial';
-        ctx.fillText(`Final Score: ${score}`, canvasWidth / 2, canvasHeight / 2 - 10);
-
-        // ランク判定
-        let rank = 'C';
-        if (score >= 1000) rank = 'S';
-        else if (score >= 700) rank = 'A';
-        else if (score >= 400) rank = 'B';
-
-        ctx.font = '28px Arial';
-        ctx.fillText(`Rank: ${rank}`, canvasWidth / 2, canvasHeight / 2 + 30);
-
-        // ベストスコア更新
-        if (score > bestScore) {
-            bestScore = score;
-            localStorage.setItem('bestScore', bestScore);
-            ctx.font = '26px Arial';
-            ctx.fillText('NEW RECORD! 🎉', canvasWidth / 2, canvasHeight / 2 + 70);
-        }
-
-        ctx.font = '20px Arial';
-        ctx.fillText('Tap to Restart', canvasWidth / 2, canvasHeight / 2 + 110);
-    }
-
-    // --- 12. ゲームの初期化・リスタート ---
-
-    function restartGame() {
-        score = 0;
-        combo = 0;
-        comboTimer = 0;
-        feverGauge = 0;
-        isFever = false;
-        feverTimer = 0;
-        lastSpeedUpScore = 0;
-        frameCount = 0;
-        elements = [];
-        popups = [];
-        applyDifficultySettings();
-
-        player.y = canvasHeight - groundHeight - playerSize;
-        player.dy = 0;
-        player.isJumping = false;
-        player.extraJumpUsed = false;
-        player.swingPhase = 0;
-        player.rotation = 0;
-        player.isInvincible = false;
-        player.invincibleTimer = 0;
-
-        // ロスト（ゲームオーバー）後はひよこでスタート
-        baseEmoji = hasLostOnce ? '🐥' : '🏃';
-        player.emoji = baseEmoji;
-
-        isGameOver = false;
-        isGameStarted = true;
-
-        bgm.currentTime = 0;
-        bgm.play().catch(e => console.log("BGM restart failed", e));
-        gameLoop();
-    }
-
-    // --- 13. メインゲームループ ---
-
-    function gameLoop() {
-        if (isGameOver) {
-            drawGameOver();
-            return;
-        }
-
-        // コンボタイマー更新
-        if (comboTimer > 0) {
-            comboTimer--;
-            if (comboTimer <= 0) {
-                combo = 0;
-                comboTimer = 0;
-            }
-        }
-
-        // フィーバー更新
-        if (isFever) {
-            feverTimer--;
-            feverGauge = Math.max(0, (feverTimer / FEVER_DURATION) * 100);
-
-            if (feverTimer <= 0) {
-                isFever = false;
-                player.isInvincible = false;
-                feverGauge = 0;
-                player.emoji = baseEmoji; // 自転車→通常キャラに戻す
-            }
-        }
-
-        // 背景
-        drawBackground();
-
-        // 地面・敵・プレイヤー・UI
-        drawGround();
-        spawnElements();
-        updateAndDrawElements();
-        updatePlayer();
-        drawPlayer();
-        checkCollisions();
-        drawPopups();
-        drawUI();
-
-        // スコアに応じてゲームスピード上昇 (難易度アップ)
-        if (!isFever && score >= lastSpeedUpScore + 200 && gameSpeed < 10) {
-            gameSpeed = Math.min(10, gameSpeed + 0.2);
-            lastSpeedUpScore = score;
-        }
-
-        animationId = requestAnimationFrame(gameLoop);
-    }
-
-    // --- 14. ゲーム開始 ---
-    bgm.volume = 0.5;
-    // BGMの再生自体はタップ時（unlockAudioContext側）で開始
-    gameLoop(); // ゲームループ開始（描画だけ先に回しておく）
-</script>
+    init();
+  </script>
 </body>
 </html>
